@@ -1,0 +1,10 @@
+{
+    "name": "kiota-gnap-auth-ts",
+    "version": "0.1.0",
+    "description": "GNAP authentication provider for Kiota-generated TypeScript clients",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "dependencies": {
+          "@microsoft/kiota-abstractions": "^1.0.0"
+    }
+}
