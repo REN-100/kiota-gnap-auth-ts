@@ -98,6 +98,8 @@ export interface GrantResponse {
     };
     access: AccessRight[];
     expires_in?: number;
+    /** Token flags (RFC 9635 §2.1.1) */
+    flags?: ('bearer' | 'durable' | string)[];
   };
   /** Interaction requirements (present if RO interaction is needed) */
   interact?: {
@@ -135,10 +137,14 @@ export interface TokenInfo {
   access: AccessRight[];
   /** Expiration timestamp (ms since epoch) */
   expiresAt?: number;
+  /** Token flags (bearer, durable) */
+  flags?: string[];
   /** Continuation info for grant updates */
   continuation?: {
     uri: string;
     token: string;
+    /** Wait interval (seconds) before polling */
+    wait?: number;
   };
 }
 

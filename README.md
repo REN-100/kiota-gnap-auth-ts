@@ -18,12 +18,19 @@ This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiot
 
 ## Features
 
-- **Full GNAP lifecycle** — Grant requests, token acquisition, continuation, rotation, and revocation
-- **Kiota-native** — Implements `AuthenticationProvider` interface
+- **Full GNAP lifecycle** — Grant requests, token acquisition, continuation, rotation, revocation, and grant deletion
+- **Kiota-native** — Implements `AuthenticationProvider` interface with `AllowedHostsValidator`
 - **HTTP Message Signatures** — Automatic RFC 9421 request signing via `@shujaapay/http-message-signatures`
-- **Token management** — In-memory token store with automatic refresh and proactive renewal
+- **Structured error handling** — Typed `GnapError` with RFC 9635 §3.6 error codes (`invalid_client`, `user_denied`, `too_fast`)
+- **Token management** — In-memory token store with automatic refresh, proactive renewal, and concurrent acquisition guard
+- **Continuation polling** — `pollContinuation()` with `wait` interval support and `too_fast` backoff
+- **Retry with backoff** — Configurable exponential retry for transient failures (429, 5xx)
+- **Lifecycle events** — Typed event emitter for `token:acquired`, `token:rotated`, `grant:error`, etc.
 - **Key proof support** — Ed25519 key proofs with real JWK export for GNAP grant requests
-- **Open Payments optimized** — Pre-configured for incoming/outgoing payments and quotes
+- **Token flags** — Support for `bearer` and `durable` flags (RFC 9635 §2.1.1)
+- **Content-Digest** — Automatic SHA-256 body digest header for request integrity (RFC 9530)
+- **Interaction hash** — RFC 9635 §4.2.3 verification with timing-safe comparison
+- **Open Payments optimized** — Wallet address identification, client display, datatypes in access rights
 
 ## Installation
 
@@ -105,7 +112,88 @@ const payments = await client.incomingPayments.get();
   +--------------------+
 ```
 
-### Real-World Integration: ShujaaPay
+### Grant Flow: Non-Interactive (Immediate Token)
+
+```mermaid
+sequenceDiagram
+    participant App as Kiota SDK
+    participant Auth as GnapAuthProvider
+    participant TokP as AccessTokenProvider
+    participant GM as GrantManager
+    participant AS as Authorization Server
+
+    App->>Auth: authenticateRequest(request)
+    Auth->>TokP: getAuthorizationToken(url)
+    TokP->>TokP: Check cache (peek)
+    Note over TokP: Cache miss
+    TokP->>GM: requestGrant(accessRights)
+    GM->>GM: Build grant request body
+    GM->>GM: Compute Content-Digest
+    GM->>GM: Sign with HTTP Message Signatures
+    GM->>AS: POST /grant (signed)
+    AS-->>GM: {access_token: {value, manage, expires_in}}
+    GM-->>TokP: GrantResponse
+    TokP->>TokP: Store token, emit token:acquired
+    TokP-->>Auth: "os_token_abc123"
+    Auth->>Auth: Sign outgoing request (tag="gnap")
+    Auth-->>App: Authenticated request
+```
+
+### Grant Flow: Interactive (Redirect → Callback → Continue)
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant TokP as AccessTokenProvider
+    participant GM as GrantManager
+    participant AS as Authorization Server
+    participant RO as Resource Owner
+
+    App->>TokP: getAuthorizationToken()
+    TokP->>GM: requestGrant(rights, interaction)
+    GM->>AS: POST /grant
+    AS-->>GM: {interact: {redirect}, continue: {uri, token, wait}}
+    GM-->>TokP: GrantResponse
+    TokP->>TokP: Emit grant:interaction_required
+    TokP--xApp: throw GnapInteractionRequiredError
+
+    App->>RO: Redirect to AS interact URL
+    RO->>AS: Approve grant
+    AS->>App: Callback with interact_ref + hash
+
+    App->>App: verifyInteractionHash()
+    App->>TokP: continueGrant(uri, token, interact_ref)
+    TokP->>GM: continueGrant(uri, token, interact_ref)
+    GM->>AS: POST /continue {interact_ref}
+    AS-->>GM: {access_token: {value}}
+    GM-->>TokP: ContinueResponse
+    TokP->>TokP: Store token, emit token:acquired
+    TokP-->>App: "os_token_abc123"
+```
+
+### Token Rotation Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant App as Kiota SDK
+    participant TokP as AccessTokenProvider
+    participant GM as GrantManager
+    participant AS as Authorization Server
+
+    App->>TokP: getAuthorizationToken()
+    TokP->>TokP: Peek cache → token expired
+    TokP->>TokP: managementUri exists
+    TokP->>GM: rotateToken(managementUri, oldToken)
+    GM->>AS: POST /manage/token (signed)
+    AS-->>GM: {access_token: {value: newToken}}
+    GM-->>TokP: "newToken"
+    TokP->>TokP: Store new token, emit token:rotated
+    TokP-->>App: "newToken"
+
+    Note over TokP: If rotation fails:
+    TokP->>TokP: Emit token:rotation_failed
+    TokP->>GM: requestGrant() (fallback)
+```
 
 [ShujaaPay](https://www.shujaapay.me) uses this provider to power authenticated Open Payments interactions across our multi-currency fintech platform:
 
@@ -187,15 +275,22 @@ await store.clear(); // Logout cleanup
 ```
 src/
   index.ts                        # Public exports
-  gnap-auth-provider.ts           # Kiota AuthenticationProvider implementation
-  gnap-access-token-provider.ts   # Token lifecycle orchestration
+  gnap-auth-provider.ts           # Kiota AuthenticationProvider + AllowedHosts
+  gnap-access-token-provider.ts   # Token lifecycle with concurrency guard + polling
   gnap-grant-manager.ts           # GNAP grant lifecycle (RFC 9635 §2-6)
   token-store.ts                  # In-memory token storage with TTL
+  errors.ts                       # GnapError, GnapInteractionRequiredError (§3.6)
+  retry.ts                        # Exponential backoff retry policy
+  events.ts                       # Typed event emitter for lifecycle events
+  interaction-hash.ts             # Interaction hash verification (§4.2.3)
   types.ts                        # TypeScript interfaces
 tests/
   token-store.test.ts             # 10 tests: CRUD, TTL, auto-prune
-  gnap-grant-manager.test.ts      # 8 tests: grant/continue/rotate/revoke
-  gnap-access-token-provider.test.ts  # 9 tests: cache, rotation, interaction
+  gnap-grant-manager.test.ts      # 14 tests: grant/continue/rotate/revoke/delete/errors
+  gnap-access-token-provider.test.ts  # 14 tests: cache, rotation, concurrency, events
+  interaction-hash.test.ts        # 8 tests: SHA-256/512, tamper, injection
+  errors.test.ts                  # 13 tests: error types, parsing, recovery
+  retry.test.ts                   # 7 tests: retry, backoff, exhaustion
 ```
 
 ## Related Projects

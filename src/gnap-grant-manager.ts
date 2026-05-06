@@ -4,7 +4,9 @@
  * Handles the full GNAP authorization lifecycle:
  * - Grant requests (§2)
  * - Grant responses (§3)
+ * - Error handling (§3.6)
  * - Continuation (§5)
+ * - Grant deletion (§5.4)
  * - Token management (§6)
  *
  * All requests are signed with HTTP Message Signatures (RFC 9421)
@@ -13,7 +15,7 @@
  * @see https://www.rfc-editor.org/rfc/rfc9635
  */
 
-import { randomBytes, createPublicKey } from 'crypto';
+import { randomBytes, createPublicKey, createHash } from 'crypto';
 import {
   createSigner,
   signRequest,
@@ -21,6 +23,8 @@ import {
   algorithmToJwkAlg,
 } from '@shujaapay/http-message-signatures';
 import type { ClientKeyConfig, ClientDisplay, AccessRight, InteractionConfig, GrantResponse, ContinueResponse } from './types';
+import { GnapError, parseGnapErrorResponse } from './errors';
+import { withRetry, DEFAULT_RETRY_POLICY, type RetryPolicy } from './retry';
 
 /**
  * Manages GNAP grant requests and responses.
@@ -30,30 +34,39 @@ import type { ClientKeyConfig, ClientDisplay, AccessRight, InteractionConfig, Gr
  * 2. AS responds with tokens, interaction requirements, or continuation
  * 3. Client handles interaction (if required) and continues the grant
  * 4. Client manages token rotation and revocation
+ * 5. Client can delete pending grants
  */
 export class GnapGrantManager {
+  private readonly retryPolicy: RetryPolicy;
+
   constructor(
     private readonly grantEndpoint: string,
     private readonly clientKey: ClientKeyConfig,
     private readonly walletAddress?: string,
-    private readonly clientDisplay?: ClientDisplay
-  ) {}
+    private readonly clientDisplay?: ClientDisplay,
+    retryPolicy?: Partial<RetryPolicy>
+  ) {
+    this.retryPolicy = { ...DEFAULT_RETRY_POLICY, ...retryPolicy };
+  }
 
   /**
    * Request a new grant from the authorization server.
    *
    * Per RFC 9635 §2, the grant request includes:
-   * - access_token: requested access rights
+   * - access_token: requested access rights with flags and datatypes
    * - client: client key information with JWK and proof method
    * - interact: interaction preferences (optional)
    *
    * @param accessRights - Resources and actions to request
    * @param interaction - Interaction configuration (optional)
+   * @param flags - Token flags (bearer, durable)
    * @returns Grant response with tokens and/or continuation info
+   * @throws {GnapError} On structured AS error responses
    */
   async requestGrant(
     accessRights: AccessRight[],
-    interaction?: InteractionConfig
+    interaction?: InteractionConfig,
+    flags?: string[]
   ): Promise<GrantResponse> {
     const grantRequest: Record<string, unknown> = {
       access_token: {
@@ -61,7 +74,9 @@ export class GnapGrantManager {
           type: right.type,
           actions: right.actions,
           ...(right.locations ? { locations: right.locations } : {}),
+          ...(right.datatypes ? { datatypes: right.datatypes } : {}),
         })),
+        ...(flags && flags.length > 0 ? { flags } : {}),
       },
       client: {
         key: {
@@ -107,6 +122,7 @@ export class GnapGrantManager {
    * @param continueToken - Continuation access token
    * @param interactRef - Interaction reference from the callback
    * @returns Updated grant response with access token
+   * @throws {GnapError} On structured AS error responses
    */
   async continueGrant(
     continueUri: string,
@@ -128,6 +144,8 @@ export class GnapGrantManager {
    *
    * Per RFC 9635 §6.1, the client presents the current
    * access token to the token management URI to get a new one.
+   *
+   * @throws {GnapError} On structured AS error responses
    */
   async rotateToken(
     managementUri: string,
@@ -139,6 +157,10 @@ export class GnapGrantManager {
       {},
       currentToken
     );
+
+    if (!response.ok) {
+      throw await parseGnapErrorResponse(response);
+    }
 
     const data = await response.json() as { access_token: { value: string } };
     return data.access_token.value;
@@ -162,10 +184,37 @@ export class GnapGrantManager {
   }
 
   /**
+   * Delete (abandon) a pending grant.
+   *
+   * Per RFC 9635 §5.4, sends DELETE to the continuation URI
+   * to explicitly abandon a pending grant.
+   *
+   * @param continueUri - Continuation URI from the grant response
+   * @param continueToken - Continuation access token
+   */
+  async deleteGrant(
+    continueUri: string,
+    continueToken: string
+  ): Promise<void> {
+    const response = await this.makeSignedRequest(
+      continueUri,
+      'DELETE',
+      undefined,
+      continueToken
+    );
+
+    if (!response.ok && response.status !== 204) {
+      throw await parseGnapErrorResponse(response);
+    }
+  }
+
+  /**
    * Make an HTTP request signed with HTTP Message Signatures (RFC 9421).
    *
    * All GNAP requests use the httpsig proof method with tag="gnap"
    * per RFC 9635 §7.3.3.
+   *
+   * Includes configurable retry with exponential backoff for transient failures.
    */
   private async makeSignedRequest(
     url: string,
@@ -173,15 +222,23 @@ export class GnapGrantManager {
     body?: Record<string, unknown>,
     bearerToken?: string
   ): Promise<Response> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+    const headers: Record<string, string> = {};
+
+    if (body && method !== 'DELETE') {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (bearerToken) {
       headers['Authorization'] = `GNAP ${bearerToken}`;
     }
 
-    const bodyStr = body ? JSON.stringify(body) : undefined;
+    const bodyStr = body && method !== 'DELETE' ? JSON.stringify(body) : undefined;
+
+    // Compute Content-Digest header for request body integrity (RFC 9530)
+    if (bodyStr) {
+      const digest = createHash('sha256').update(bodyStr).digest('base64');
+      headers['Content-Digest'] = `sha-256=:${digest}:`;
+    }
 
     // Sign the request using HTTP Message Signatures with GNAP tag
     const signer = createSigner({
@@ -207,11 +264,16 @@ export class GnapGrantManager {
 
     const allHeaders = { ...headers, ...signedHeaders };
 
-    return fetch(url, {
-      method,
-      headers: allHeaders,
-      body: bodyStr,
-    });
+    // Wrap in retry for transient failures
+    return withRetry(
+      () => fetch(url, {
+        method,
+        headers: allHeaders,
+        body: bodyStr,
+      }),
+      this.retryPolicy,
+      (response) => this.retryPolicy.retryableStatuses.includes(response.status)
+    );
   }
 
   /**
@@ -243,10 +305,15 @@ export class GnapGrantManager {
 
   /**
    * Parse a grant response from the authorization server.
+   *
+   * Per RFC 9635 §3.6, non-OK responses may contain structured error
+   * bodies with error codes, descriptions, and continuation info.
+   *
+   * @throws {GnapError} On structured AS error responses
    */
   private async parseGrantResponse(response: Response): Promise<GrantResponse> {
     if (!response.ok) {
-      throw new Error(`GNAP grant request failed: ${response.status} ${response.statusText}`);
+      throw await parseGnapErrorResponse(response);
     }
 
     const data = await response.json() as Record<string, unknown>;
@@ -260,10 +327,12 @@ export class GnapGrantManager {
 
   /**
    * Parse a continuation response.
+   *
+   * @throws {GnapError} On structured AS error responses
    */
   private async parseContinueResponse(response: Response): Promise<ContinueResponse> {
     if (!response.ok) {
-      throw new Error(`GNAP continuation failed: ${response.status} ${response.statusText}`);
+      throw await parseGnapErrorResponse(response);
     }
 
     const data = await response.json() as Record<string, unknown>;
