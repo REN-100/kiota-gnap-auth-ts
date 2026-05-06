@@ -332,10 +332,18 @@ describe('GnapGrantManager', () => {
   });
 
   describe('rotateToken', () => {
-    it('rotates token via management URI', async () => {
+    it('rotates token via management URI and returns full response', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ access_token: { value: 'rotated_token' } }),
+        json: async () => ({
+          access_token: {
+            value: 'rotated_token',
+            manage: 'https://auth.example/manage/2',
+            expires_in: 7200,
+            flags: ['bearer'],
+            access: [{ type: 'incoming-payment', actions: ['create'] }],
+          },
+        }),
       });
 
       const result = await manager.rotateToken(
@@ -343,7 +351,30 @@ describe('GnapGrantManager', () => {
         'old_token'
       );
 
-      expect(result).toBe('rotated_token');
+      expect(result.value).toBe('rotated_token');
+      expect(result.manage).toBe('https://auth.example/manage/2');
+      expect(result.expiresIn).toBe(7200);
+      expect(result.flags).toEqual(['bearer']);
+      expect(result.access).toEqual([{ type: 'incoming-payment', actions: ['create'] }]);
+    });
+
+    it('preserves original managementUri when AS omits manage', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: {
+            value: 'rotated_token_no_manage',
+          },
+        }),
+      });
+
+      const result = await manager.rotateToken(
+        'https://auth.example/manage/1',
+        'old_token'
+      );
+
+      expect(result.value).toBe('rotated_token_no_manage');
+      expect(result.manage).toBe('https://auth.example/manage/1');
     });
 
     it('throws GnapError on rotation failure', async () => {
@@ -357,6 +388,88 @@ describe('GnapGrantManager', () => {
 
       await expect(
         manager.rotateToken('https://auth.example/manage/1', 'old_token')
+      ).rejects.toThrow(GnapError);
+    });
+  });
+
+  describe('introspectToken', () => {
+    it('introspects token metadata via GET', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: {
+            value: 'current_token',
+            manage: 'https://auth.example/manage/1',
+            expires_in: 1800,
+            access: [{ type: 'outgoing-payment', actions: ['create'] }],
+            flags: ['durable'],
+          },
+        }),
+      });
+
+      const result = await manager.introspectToken(
+        'https://auth.example/manage/1',
+        'current_token'
+      );
+
+      expect(result.value).toBe('current_token');
+      expect(result.expiresIn).toBe(1800);
+      expect(result.flags).toEqual(['durable']);
+
+      // Verify GET method was used
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[1].method).toBe('GET');
+    });
+
+    it('handles flat introspection response (no access_token wrapper)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          value: 'flat_token',
+          manage: 'https://auth.example/manage/1',
+          expires_in: 900,
+        }),
+      });
+
+      const result = await manager.introspectToken(
+        'https://auth.example/manage/1',
+        'flat_token'
+      );
+
+      expect(result.value).toBe('flat_token');
+      expect(result.expiresIn).toBe(900);
+    });
+
+    it('falls back to current token if AS omits value', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: {
+            manage: 'https://auth.example/manage/1',
+            expires_in: 3600,
+          },
+        }),
+      });
+
+      const result = await manager.introspectToken(
+        'https://auth.example/manage/1',
+        'my_current_token'
+      );
+
+      expect(result.value).toBe('my_current_token');
+    });
+
+    it('throws GnapError on introspection failure', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        headers: { get: () => null },
+        json: async () => ({ error: 'unknown_request' }),
+      });
+
+      await expect(
+        manager.introspectToken('https://auth.example/manage/1', 'token')
       ).rejects.toThrow(GnapError);
     });
   });

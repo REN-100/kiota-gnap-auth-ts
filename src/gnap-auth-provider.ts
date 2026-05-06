@@ -185,4 +185,21 @@ export class GnapAuthenticationProvider implements AuthenticationProvider {
   getAccessTokenProvider(): GnapAccessTokenProvider {
     return this.accessTokenProvider;
   }
+
+  /**
+   * Close the provider and release any resources.
+   * Called automatically when using `await using` or manual cleanup.
+   */
+  async close(): Promise<void> {
+    // Currently stateless (uses global fetch), but provides
+    // a lifecycle signal for future resource management.
+  }
+
+  /**
+   * Support `await using` syntax (TC39 Explicit Resource Management).
+   * Available in Node.js 18+ with --harmony flag, native in 20+.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.close();
+  }
 }

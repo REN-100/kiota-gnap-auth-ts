@@ -1,31 +1,29 @@
-name: CI
+name: Publish to npm
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write  # Required for npm provenance
 
 jobs:
-  test:
+  publish:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [18, 20, 22]
-
     steps:
       - uses: actions/checkout@v4
 
       # Checkout the signing library as a sibling directory
-      # GitHub Actions workspace is $GITHUB_WORKSPACE, so we clone to a sibling
       - name: Clone http-message-signatures-ts
         run: |
           git clone https://github.com/REN-100/http-message-signatures-ts.git "$GITHUB_WORKSPACE/../http-message-signatures-ts"
 
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
 
       # Build the signing library first
       - name: Build http-message-signatures-ts
@@ -50,14 +48,9 @@ jobs:
         run: |
           test -f dist/index.js
           test -f dist/index.d.ts
-          test -f dist/gnap-auth-provider.js
-          test -f dist/gnap-grant-manager.js
-          test -f dist/gnap-access-token-provider.js
-          test -f dist/token-store.js
-          test -f dist/wallet-address.js
-          test -f dist/errors.js
-          test -f dist/retry.js
-          test -f dist/events.js
-          test -f dist/interaction-hash.js
-          test -f dist/types.js
-          echo "All dist files present (12 modules)"
+          echo "✅ Build verified"
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

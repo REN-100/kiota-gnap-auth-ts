@@ -1,18 +1,20 @@
 {
   "name": "@shujaapay/kiota-gnap-auth-ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Kiota GNAP authentication provider for Open Payments — RFC 9635 authorization with automatic HTTP Message Signatures",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "require": "./dist/index.js"
     }
   },
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

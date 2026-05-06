@@ -16,6 +16,10 @@ export { GnapGrantManager } from './gnap-grant-manager';
 // Token storage
 export { InMemoryTokenStore } from './token-store';
 
+// Wallet address resolution (Open Payments)
+export { resolveWalletAddress, getWalletAddressKeys, WalletAddressResolutionError } from './wallet-address';
+export type { WalletAddressInfo, WalletAddressKey, WalletAddressKeys } from './wallet-address';
+
 // Error handling (RFC 9635 §3.6)
 export { GnapError, GnapInteractionRequiredError, parseGnapErrorResponse } from './errors';
 export type { GnapErrorCode } from './errors';
@@ -42,6 +46,7 @@ export type {
   ContinueResponse,
   TokenInfo,
   TokenStore,
+  TokenAccessResponse,
   PaymentLimits,
   Amount,
 } from './types';

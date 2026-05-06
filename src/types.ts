@@ -201,8 +201,8 @@ export interface TokenInfo {
   value: string;
   /** Token management URI */
   managementUri?: string;
-  /** Access rights granted */
-  access: AccessRight[];
+  /** Access rights granted (may be absent from rotation/continuation responses) */
+  access?: AccessRight[];
   /** Expiration timestamp (ms since epoch) */
   expiresAt?: number;
   /** Token flags (bearer, durable) */
@@ -214,6 +214,23 @@ export interface TokenInfo {
     /** Wait interval (seconds) before polling */
     wait?: number;
   };
+}
+
+/**
+ * Structured token access response from rotation/introspection.
+ * Per RFC 9635 §6.1, the AS returns the full token object on rotation.
+ */
+export interface TokenAccessResponse {
+  /** New access token value */
+  value: string;
+  /** Updated token management URI (may change on rotation) */
+  manage?: string;
+  /** Access rights (if returned by AS) */
+  access?: AccessRight[];
+  /** Token lifetime in seconds */
+  expiresIn?: number;
+  /** Token flags */
+  flags?: string[];
 }
 
 /** Token storage interface (implement for custom storage) */

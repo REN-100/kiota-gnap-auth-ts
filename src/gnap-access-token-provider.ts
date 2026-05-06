@@ -124,19 +124,24 @@ export class GnapAccessTokenProvider {
     const stale = cached || peeked;
     if (stale?.managementUri && stale.value) {
       try {
-        const newTokenValue = await this.grantManager.rotateToken(
+        const rotated = await this.grantManager.rotateToken(
           stale.managementUri,
           stale.value
         );
         const refreshed: TokenInfo = {
           ...stale,
-          value: newTokenValue,
-          expiresAt: Date.now() + 3600_000, // Default 1 hour
+          value: rotated.value,
+          managementUri: rotated.manage || stale.managementUri,
+          access: rotated.access || stale.access,
+          flags: rotated.flags || stale.flags,
+          expiresAt: rotated.expiresIn
+            ? Date.now() + rotated.expiresIn * 1000
+            : Date.now() + 3600_000,
         };
         await this.tokenStore.set(scopeKey, refreshed);
         this.events.emit('token:rotated', {
           scopeKey,
-          managementUri: stale.managementUri,
+          managementUri: refreshed.managementUri!,
         });
         return refreshed.value;
       } catch (rotateErr) {

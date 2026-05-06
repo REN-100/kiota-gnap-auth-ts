@@ -124,7 +124,7 @@ describe('GnapAccessTokenProvider', () => {
     });
 
     const { provider, manager } = createProvider(store);
-    manager.rotateToken.mockResolvedValueOnce('rotated_token');
+    manager.rotateToken.mockResolvedValueOnce({ value: 'rotated_token', manage: 'https://auth.example/manage/1' });
 
     const result = await provider.getAuthorizationToken();
     expect(result).toBe('rotated_token');
@@ -172,7 +172,7 @@ describe('GnapAccessTokenProvider', () => {
     });
 
     const { provider, manager } = createProvider(store);
-    manager.rotateToken.mockResolvedValueOnce('proactive_refresh');
+    manager.rotateToken.mockResolvedValueOnce({ value: 'proactive_refresh', manage: 'https://auth.example/manage/1', expiresIn: 3600 });
 
     const result = await provider.getAuthorizationToken();
     expect(result).toBe('proactive_refresh');
@@ -242,7 +242,7 @@ describe('GnapAccessTokenProvider', () => {
       const events: any[] = [];
       provider.events.on('token:rotated', (e) => events.push(e));
 
-      manager.rotateToken.mockResolvedValueOnce('rotated');
+      manager.rotateToken.mockResolvedValueOnce({ value: 'rotated', manage: 'https://auth.example/manage/1' });
       await provider.getAuthorizationToken();
 
       expect(events).toHaveLength(1);

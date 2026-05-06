@@ -18,7 +18,8 @@ This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiot
 
 ## Features
 
-- **Full GNAP lifecycle** — Grant requests, token acquisition, continuation, rotation, revocation, and grant deletion
+- **Full GNAP lifecycle** — Grant requests, token acquisition, continuation, rotation, revocation, introspection, and grant deletion
+- **Wallet address resolution** — Auto-discover auth server from Open Payments wallet addresses
 - **Kiota-native** — Implements `AuthenticationProvider` interface with `AllowedHostsValidator`
 - **HTTP Message Signatures** — Automatic RFC 9421 request signing via `@shujaapay/http-message-signatures`
 - **Structured error handling** — Typed `GnapError` with RFC 9635 §3.6 error codes (`invalid_client`, `user_denied`, `too_fast`)
@@ -30,6 +31,7 @@ This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiot
 - **Token flags** — Support for `bearer` and `durable` flags (RFC 9635 §2.1.1)
 - **Content-Digest** — Automatic SHA-256 body digest header for request integrity (RFC 9530)
 - **Interaction hash** — RFC 9635 §4.2.3 verification with timing-safe comparison
+- **Resource cleanup** — `close()` and `Symbol.asyncDispose` for lifecycle management
 - **Open Payments optimized** — Wallet address identification, `identifier`, `limits` (debitAmount/receiveAmount/interval), client display
 
 ## Installation
@@ -272,8 +274,13 @@ const grant = await manager.requestGrant(accessRights, interaction);
 // Continue a pending grant
 const continued = await manager.continueGrant(continueUri, continueToken, interactRef);
 
-// Rotate an access token
-const newToken = await manager.rotateToken(tokenManagementUri, token);
+// Rotate an access token (returns full TokenAccessResponse)
+const rotated = await manager.rotateToken(tokenManagementUri, token);
+console.log(rotated.value, rotated.manage, rotated.expiresIn);
+
+// Introspect an access token (RFC 9635 §6.3)
+const info = await manager.introspectToken(tokenManagementUri, token);
+console.log(info.expiresIn, info.flags);
 
 // Revoke an access token
 await manager.revokeToken(tokenManagementUri, token);
@@ -309,10 +316,11 @@ await store.clear(); // Logout cleanup
 ```
 src/
   index.ts                        # Public exports
-  gnap-auth-provider.ts           # Kiota AuthenticationProvider + AllowedHosts
+  gnap-auth-provider.ts           # Kiota AuthenticationProvider + AllowedHosts + dispose
   gnap-access-token-provider.ts   # Token lifecycle with concurrency guard + polling
-  gnap-grant-manager.ts           # GNAP grant lifecycle (RFC 9635 §2-6)
+  gnap-grant-manager.ts           # GNAP grant lifecycle (RFC 9635 §2-6) + introspection
   token-store.ts                  # In-memory token storage with TTL
+  wallet-address.ts               # Open Payments wallet address resolution
   errors.ts                       # GnapError, GnapInteractionRequiredError (§3.6)
   retry.ts                        # Exponential backoff retry policy
   events.ts                       # Typed event emitter for lifecycle events
@@ -320,8 +328,9 @@ src/
   types.ts                        # TypeScript interfaces
 tests/
   token-store.test.ts             # 10 tests: CRUD, TTL, auto-prune
-  gnap-grant-manager.test.ts      # 17 tests: grant/continue/rotate/revoke/delete/errors/ECDSA/OP
+  gnap-grant-manager.test.ts      # 24 tests: grant/continue/rotate/revoke/introspect/delete
   gnap-access-token-provider.test.ts  # 14 tests: cache, rotation, concurrency, events
+  wallet-address.test.ts          # 10 tests: resolution, $format, HTTPS, errors
   interaction-hash.test.ts        # 8 tests: SHA-256/512, tamper, injection
   errors.test.ts                  # 13 tests: error types, parsing, recovery
   retry.test.ts                   # 7 tests: retry, backoff, exhaustion
@@ -334,7 +343,7 @@ This library is part of the **ShujaaPay GNAP Stack** by [ShujaaPay](https://www.
 | Repo | Description | Status |
 |------|-------------|--------|
 | [`gnap-openapi-security-scheme`](https://github.com/REN-100/gnap-openapi-security-scheme) | `x-gnap` OpenAPI extension for GNAP security | In progress |
-| **`kiota-gnap-auth-ts`** | **This repo** — Kiota GNAP auth provider | In progress |
+| **`kiota-gnap-auth-ts`** | **This repo** — Kiota GNAP auth provider | ✅ v0.2.0 |
 | [`kiota-gnap-auth-python`](https://github.com/REN-100/kiota-gnap-auth-python) | Kiota GNAP auth provider (Python) | In progress |
 | [`http-message-signatures-ts`](https://github.com/REN-100/http-message-signatures-ts) | RFC 9421 signing library (dependency) | In progress |
 

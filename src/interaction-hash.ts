@@ -8,7 +8,7 @@
  * Hash = Base64URL(SHA(clientNonce + "\n" + asNonce + "\n" + interactRef + "\n" + grantEndpoint))
  */
 
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'crypto';
 
 /**
  * Hash method to Node.js algorithm mapping.
@@ -100,22 +100,12 @@ export function computeInteractionHash(params: {
 
 /**
  * Constant-time string comparison to prevent timing attacks.
+ * Uses Node.js crypto.timingSafeEqual for guaranteed constant-time comparison.
  */
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
 
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
-
-  try {
-    const { timingSafeEqual: tse } = require('crypto');
-    return tse(bufA, bufB);
-  } catch {
-    // Fallback: still constant-time via XOR
-    let result = 0;
-    for (let i = 0; i < bufA.length; i++) {
-      result |= bufA[i] ^ bufB[i];
-    }
-    return result === 0;
-  }
+  return cryptoTimingSafeEqual(bufA, bufB);
 }

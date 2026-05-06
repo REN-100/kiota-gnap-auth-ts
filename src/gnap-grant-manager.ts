@@ -22,7 +22,7 @@ import {
   exportPublicJwk,
   algorithmToJwkAlg,
 } from '@shujaapay/http-message-signatures';
-import type { ClientKeyConfig, ClientDisplay, AccessRight, InteractionConfig, GrantResponse, ContinueResponse } from './types';
+import type { ClientKeyConfig, ClientDisplay, AccessRight, InteractionConfig, GrantResponse, ContinueResponse, TokenAccessResponse } from './types';
 import { GnapError, parseGnapErrorResponse } from './errors';
 import { withRetry, DEFAULT_RETRY_POLICY, type RetryPolicy } from './retry';
 
@@ -146,13 +146,15 @@ export class GnapGrantManager {
    *
    * Per RFC 9635 §6.1, the client presents the current
    * access token to the token management URI to get a new one.
+   * Returns the full token response including the new management
+   * URI, expiry, and flags.
    *
    * @throws {GnapError} On structured AS error responses
    */
   async rotateToken(
     managementUri: string,
     currentToken: string
-  ): Promise<string> {
+  ): Promise<TokenAccessResponse> {
     const response = await this.makeSignedRequest(
       managementUri,
       'POST',
@@ -164,8 +166,63 @@ export class GnapGrantManager {
       throw await parseGnapErrorResponse(response);
     }
 
-    const data = await response.json() as { access_token: { value: string } };
-    return data.access_token.value;
+    const data = await response.json() as Record<string, unknown>;
+    const at = data.access_token as Record<string, unknown>;
+
+    // manage can be a string or { uri: string }
+    let manage = at.manage as string | undefined;
+    if (manage && typeof manage === 'object') {
+      manage = (manage as unknown as Record<string, string>).uri;
+    }
+
+    return {
+      value: at.value as string,
+      manage: (manage as string) || managementUri,
+      access: at.access as AccessRight[] | undefined,
+      expiresIn: at.expires_in as number | undefined,
+      flags: at.flags as string[] | undefined,
+    };
+  }
+
+  /**
+   * Introspect an access token.
+   *
+   * Per RFC 9635 §6.3, sends GET to the management URI
+   * to retrieve the current token status and metadata.
+   *
+   * @throws {GnapError} On introspection failure
+   */
+  async introspectToken(
+    managementUri: string,
+    currentToken: string
+  ): Promise<TokenAccessResponse> {
+    const response = await this.makeSignedRequest(
+      managementUri,
+      'GET',
+      undefined,
+      currentToken
+    );
+
+    if (!response.ok) {
+      throw await parseGnapErrorResponse(response);
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    // AS may wrap in access_token or return flat
+    const at = (data.access_token || data) as Record<string, unknown>;
+
+    let manage = at.manage as string | undefined;
+    if (manage && typeof manage === 'object') {
+      manage = (manage as unknown as Record<string, string>).uri;
+    }
+
+    return {
+      value: (at.value as string) || currentToken,
+      manage: (manage as string) || managementUri,
+      access: at.access as AccessRight[] | undefined,
+      expiresIn: at.expires_in as number | undefined,
+      flags: at.flags as string[] | undefined,
+    };
   }
 
   /**
