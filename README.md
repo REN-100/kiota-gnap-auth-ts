@@ -362,7 +362,6 @@ Contributions are welcome! Key areas:
 - [RFC 9421 — HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421)
 - [Open Payments Specification](https://openpayments.dev)
 - [Microsoft Kiota](https://learn.microsoft.com/en-us/openapi/kiota/)
-- [Interledger Foundation](https://interledger.org)
 
 ## License
 
