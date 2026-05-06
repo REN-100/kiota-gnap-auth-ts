@@ -16,14 +16,33 @@ export interface GnapAuthOptions {
   interaction?: InteractionConfig;
   /** Custom token store (default: InMemoryTokenStore) */
   tokenStore?: TokenStore;
+  /**
+   * Allowed hosts for token transmission (Kiota best practice).
+   * If set, tokens are only attached to requests targeting these hosts.
+   * Prevents credential leakage to unauthorized domains.
+   * @example ['wallet.example', 'auth.wallet.example']
+   */
+  allowedHosts?: string[];
+  /**
+   * Client display information for GNAP grant requests.
+   * Shown to the resource owner during interaction.
+   */
+  clientDisplay?: ClientDisplay;
+  /**
+   * Wallet address for client identification (Open Payments).
+   * If set, the AS resolves the client's JWKS from this endpoint
+   * instead of using inline JWK in the grant request.
+   * @example 'https://wallet.example/alice'
+   */
+  walletAddress?: string;
 }
 
 /** Client key configuration for GNAP key proofs */
 export interface ClientKeyConfig {
   /** Key identifier */
   keyId: string;
-  /** Private key material */
-  privateKey: string | Buffer | CryptoKey;
+  /** Private key material (PEM string or Buffer) */
+  privateKey: string | Buffer;
   /** Signing algorithm */
   algorithm: Algorithm;
   /** Key proof method */
@@ -51,7 +70,22 @@ export interface InteractionConfig {
     method: 'redirect' | 'push';
     uri: string;
     nonce?: string;
+    /** Hash method for interaction hash verification (default: sha-256) */
+    hash_method?: 'sha-256' | 'sha-512' | 'sha3-256' | 'sha3-512';
   };
+}
+
+/**
+ * Client display information (RFC 9635 §2.3).
+ * Shown to the resource owner during interaction.
+ */
+export interface ClientDisplay {
+  /** Human-readable client name */
+  name?: string;
+  /** Client logo URI */
+  uri?: string;
+  /** Client logo image */
+  logo_uri?: string;
 }
 
 /** GNAP grant response (RFC 9635 Section 3) */

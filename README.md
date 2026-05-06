@@ -1,23 +1,29 @@
 # Kiota GNAP Authentication Provider for TypeScript
 
 > A Kiota-compatible authentication provider implementing GNAP (RFC 9635) for automated Open Payments SDK generation in TypeScript/Node.js.
+>
+> Built by [ShujaaPay](https://www.shujaapay.me) — contributing to the Open Payments ecosystem.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![RFC 9635](https://img.shields.io/badge/RFC-9635-orange.svg)](https://www.rfc-editor.org/rfc/rfc9635)
 [![Kiota](https://img.shields.io/badge/Kiota-compatible-blue.svg)](https://learn.microsoft.com/en-us/openapi/kiota/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-green.svg)](https://nodejs.org/)
+
+---
 
 ## Overview
 
-This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiota/) `AuthenticationProvider` that handles the complete GNAP authorization lifecycle for Open Payments APIs. When used with Kiota-generated SDKs, it enables **zero-configuration authentication** - developers get working GNAP auth out of the box.
+This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiota/) `AuthenticationProvider` that handles the complete GNAP authorization lifecycle for Open Payments APIs. When used with Kiota-generated SDKs, it enables **zero-configuration authentication** — developers get working GNAP auth out of the box.
 
 ## Features
 
-- **Full GNAP lifecycle** - Grant requests, token acquisition, continuation, rotation, and revocation
-- **Kiota-native** - Implements `AuthenticationProvider` and `AccessTokenProvider` interfaces
-- **HTTP Message Signatures** - Automatic RFC 9421 request signing via `@shujaapay/http-message-signatures`
-- **Token management** - In-memory token store with automatic refresh
-- **Key proof support** - Ed25519, ECDSA-P256 key proofs for GNAP
-- **Open Payments optimized** - Pre-configured for incoming/outgoing payments and quotes
+- **Full GNAP lifecycle** — Grant requests, token acquisition, continuation, rotation, and revocation
+- **Kiota-native** — Implements `AuthenticationProvider` interface
+- **HTTP Message Signatures** — Automatic RFC 9421 request signing via `@shujaapay/http-message-signatures`
+- **Token management** — In-memory token store with automatic refresh and proactive renewal
+- **Key proof support** — Ed25519 key proofs with real JWK export for GNAP grant requests
+- **Open Payments optimized** — Pre-configured for incoming/outgoing payments and quotes
 
 ## Installation
 
@@ -29,7 +35,6 @@ npm install @shujaapay/kiota-gnap-auth-ts @shujaapay/http-message-signatures
 
 ```typescript
 import { GnapAuthenticationProvider } from '@shujaapay/kiota-gnap-auth-ts';
-import { createGnapSigner } from '@shujaapay/http-message-signatures';
 
 // 1. Create the GNAP auth provider
 const authProvider = new GnapAuthenticationProvider({
@@ -54,7 +59,7 @@ import { FetchRequestAdapter } from '@microsoft/kiota-http-fetchlibrary';
 const adapter = new FetchRequestAdapter(authProvider);
 const client = new OpenPaymentsClient(adapter);
 
-// 3. Make authenticated API calls - GNAP auth is automatic
+// 3. Make authenticated API calls — GNAP auth is automatic
 const payments = await client.incomingPayments.get();
 ```
 
@@ -67,26 +72,50 @@ const payments = await client.incomingPayments.get();
         +-----------------------------+
         | GnapAuthenticationProvider   |
         |  - authenticateRequest()     |
-        |  - getAuthorizationToken()   |
+        |  - signs with tag="gnap"     |
         +-----------------------------+
                        |
           +------------+------------+
           |                         |
           v                         v
-  +----------------+    +--------------------+
-  | GnapGrantManager|    | HttpSignatureSigner|
-  |  - requestGrant |    |  - signRequest     |
-  |  - continueGrant|    |  - RFC 9421        |
-  |  - rotateToken  |    +--------------------+
-  +----------------+          (from @shujaapay/
+  +--------------------+   +--------------------+
+  | GnapAccessToken    |   | HTTP Message       |
+  | Provider           |   | Signatures         |
+  |  - cache-first     |   |  - RFC 9421        |
+  |  - auto-refresh    |   |  - tag="gnap"      |
+  |  - proactive renew |   +--------------------+
+  +--------------------+        (from @shujaapay/
           |               http-message-signatures)
           v
-  +----------------+
-  | TokenStore      |
-  |  - get/set/clear|
-  |  - auto-refresh |
-  +----------------+
+  +--------------------+
+  | GnapGrantManager   |
+  |  - requestGrant    |
+  |  - continueGrant   |
+  |  - rotateToken     |
+  |  - revokeToken     |
+  |  - JWK export      |
+  +--------------------+
+          |
+          v
+  +--------------------+
+  | InMemoryTokenStore |
+  |  - TTL-aware get   |
+  |  - auto-prune      |
+  |  - peek for rotate |
+  +--------------------+
 ```
+
+### Real-World Integration: ShujaaPay
+
+[ShujaaPay](https://www.shujaapay.me) uses this provider to power authenticated Open Payments interactions across our multi-currency fintech platform:
+
+**🔐 SDK-First Architecture** — ShujaaPay's gateway uses Kiota-generated SDKs with this auth provider, eliminating manual GNAP implementation and ensuring every API call is cryptographically signed.
+
+**💸 Cross-Wallet Payments** — When initiating outgoing payments to Rafiki-based wallets, the provider automatically handles grant negotiation, token acquisition, and HTTP signature generation — developers write `client.outgoingPayments.create(...)` and auth is handled transparently.
+
+**🔄 Token Lifecycle** — The provider's 30-second grace period proactive refresh ensures uninterrupted payment streams for Web Monetization, preventing mid-session token expiration during streaming micropayments.
+
+> This provider exists because building GNAP auth from scratch requires understanding 160+ pages of RFCs. We built it once, tested it against real Open Payments infrastructure, and now any fintech can use it out of the box.
 
 ## API Reference
 
@@ -110,7 +139,7 @@ const provider = new GnapAuthenticationProvider(options: GnapAuthOptions);
 
 ### `GnapGrantManager`
 
-Manages the GNAP grant lifecycle.
+Manages the GNAP grant lifecycle with automatic HTTP Message Signatures.
 
 ```typescript
 const manager = new GnapGrantManager(grantEndpoint, clientKey);
@@ -128,37 +157,81 @@ const newToken = await manager.rotateToken(tokenManagementUri, token);
 await manager.revokeToken(tokenManagementUri, token);
 ```
 
+### `GnapAccessTokenProvider`
+
+Orchestrates the token lifecycle with cache-first strategy.
+
+```typescript
+const provider = new GnapAccessTokenProvider(grantManager, tokenStore, accessRights);
+
+// Get a token (from cache, rotation, or new grant)
+const token = await provider.getAuthorizationToken(url);
+
+// Continue after user interaction
+const token = await provider.continueGrant(continueUri, continueToken, interactRef);
+```
+
+### `InMemoryTokenStore`
+
+Default token storage with TTL-aware retrieval.
+
+```typescript
+const store = new InMemoryTokenStore();
+await store.set('scope', tokenInfo);
+const token = await store.get('scope'); // Returns undefined if expired
+await store.clear(); // Logout cleanup
+```
+
 ## Project Structure
 
 ```
 src/
   index.ts                        # Public exports
   gnap-auth-provider.ts           # Kiota AuthenticationProvider implementation
-  gnap-access-token-provider.ts   # Kiota AccessTokenProvider implementation
-  gnap-grant-manager.ts           # GNAP grant lifecycle management
-  token-store.ts                  # Token storage and auto-refresh
+  gnap-access-token-provider.ts   # Token lifecycle orchestration
+  gnap-grant-manager.ts           # GNAP grant lifecycle (RFC 9635 §2-6)
+  token-store.ts                  # In-memory token storage with TTL
   types.ts                        # TypeScript interfaces
 tests/
-  gnap-auth-provider.test.ts
-  gnap-grant-manager.test.ts
-  token-store.test.ts
-  fixtures/
-    mock-grant-server.ts          # Mock GNAP authorization server for testing
+  token-store.test.ts             # 10 tests: CRUD, TTL, auto-prune
+  gnap-grant-manager.test.ts      # 8 tests: grant/continue/rotate/revoke
+  gnap-access-token-provider.test.ts  # 9 tests: cache, rotation, interaction
 ```
 
-## Relationship to ShujaaPay GNAP Stack
+## Related Projects
 
-| Repo | Workstream | Role |
-|---|---|---|
-| [gnap-openapi-security-scheme](https://github.com/REN-100/gnap-openapi-security-scheme) | WS1 | Defines the x-gnap metadata this provider consumes |
-| **This repo** | **WS2** | **Kiota TypeScript GNAP auth provider** |
-| [kiota-gnap-auth-python](https://github.com/REN-100/kiota-gnap-auth-python) | WS3 | Python equivalent of this provider |
-| [http-message-signatures-ts](https://github.com/REN-100/http-message-signatures-ts) | WS4 | Signing library this provider depends on |
+This library is part of the **ShujaaPay GNAP Stack** by [ShujaaPay](https://www.shujaapay.me), contributing open-source tooling to the [Open Payments](https://openpayments.dev) ecosystem:
+
+| Repo | Description | Status |
+|------|-------------|--------|
+| [`gnap-openapi-security-scheme`](https://github.com/REN-100/gnap-openapi-security-scheme) | `x-gnap` OpenAPI extension for GNAP security | In progress |
+| **`kiota-gnap-auth-ts`** | **This repo** — Kiota GNAP auth provider | In progress |
+| [`kiota-gnap-auth-python`](https://github.com/REN-100/kiota-gnap-auth-python) | Kiota GNAP auth provider (Python) | In progress |
+| [`http-message-signatures-ts`](https://github.com/REN-100/http-message-signatures-ts) | RFC 9421 signing library (dependency) | In progress |
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome! Key areas:
+
+- Integration tests with [Rafiki](https://github.com/interledger/rafiki) testnet
+- Persistent token stores (Redis, SQLite)
+- ECDSA-P256 key proof support
+- Interaction handler utilities (redirect, user_code)
+
+## References
+
+- [RFC 9635 — GNAP](https://www.rfc-editor.org/rfc/rfc9635)
+- [RFC 9421 — HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421)
+- [Open Payments Specification](https://openpayments.dev)
+- [Microsoft Kiota](https://learn.microsoft.com/en-us/openapi/kiota/)
+- [Interledger Foundation](https://interledger.org)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Made with ❤️ by <a href="https://www.shujaapay.me">ShujaaPay</a> · Contributing to Open Payments
+</p>

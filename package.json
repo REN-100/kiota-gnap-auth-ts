@@ -1,10 +1,67 @@
 {
-    "name": "kiota-gnap-auth-ts",
-    "version": "0.1.0",
-    "description": "GNAP authentication provider for Kiota-generated TypeScript clients",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "dependencies": {
-          "@microsoft/kiota-abstractions": "^1.0.0"
+  "name": "@shujaapay/kiota-gnap-auth-ts",
+  "version": "0.1.0",
+  "description": "Kiota GNAP authentication provider for Open Payments — RFC 9635 authorization with automatic HTTP Message Signatures",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run test && npm run build"
+  },
+  "keywords": [
+    "kiota",
+    "gnap",
+    "rfc-9635",
+    "open-payments",
+    "interledger",
+    "authentication",
+    "http-signatures",
+    "rfc-9421",
+    "oauth",
+    "authorization"
+  ],
+  "author": "ShujaaPay (https://www.shujaapay.me)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/REN-100/kiota-gnap-auth-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/REN-100/kiota-gnap-auth-ts/issues"
+  },
+  "homepage": "https://github.com/REN-100/kiota-gnap-auth-ts#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@microsoft/kiota-abstractions": "^1.0.0-preview.100"
+  },
+  "peerDependencies": {
+    "@shujaapay/http-message-signatures": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@shujaapay/http-message-signatures": "file:../http-message-signatures-ts",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "@types/jest": "^29.5.0"
+  }
 }

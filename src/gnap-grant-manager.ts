@@ -1,18 +1,30 @@
 /**
- * GNAP Grant Manager - RFC 9635 Grant Lifecycle
- * 
- * Handles the full GNAP grant lifecycle:
- * - Grant requests (Section 2)
- * - Grant responses (Section 3)
- * - Continuation (Section 5)
- * - Token management (Section 6)
+ * GNAP Grant Manager — RFC 9635 Grant Lifecycle
+ *
+ * Handles the full GNAP authorization lifecycle:
+ * - Grant requests (§2)
+ * - Grant responses (§3)
+ * - Continuation (§5)
+ * - Token management (§6)
+ *
+ * All requests are signed with HTTP Message Signatures (RFC 9421)
+ * using the GNAP httpsig proof method (RFC 9635 §7.3.3).
+ *
+ * @see https://www.rfc-editor.org/rfc/rfc9635
  */
 
-import type { ClientKeyConfig, AccessRight, InteractionConfig, GrantResponse, ContinueResponse } from './types';
+import { randomBytes, createPublicKey } from 'crypto';
+import {
+  createSigner,
+  signRequest,
+  exportPublicJwk,
+  algorithmToJwkAlg,
+} from '@shujaapay/http-message-signatures';
+import type { ClientKeyConfig, ClientDisplay, AccessRight, InteractionConfig, GrantResponse, ContinueResponse } from './types';
 
 /**
  * Manages GNAP grant requests and responses.
- * 
+ *
  * Implements the grant lifecycle defined in RFC 9635:
  * 1. Client sends a grant request to the AS
  * 2. AS responds with tokens, interaction requirements, or continuation
@@ -22,17 +34,19 @@ import type { ClientKeyConfig, AccessRight, InteractionConfig, GrantResponse, Co
 export class GnapGrantManager {
   constructor(
     private readonly grantEndpoint: string,
-    private readonly clientKey: ClientKeyConfig
+    private readonly clientKey: ClientKeyConfig,
+    private readonly walletAddress?: string,
+    private readonly clientDisplay?: ClientDisplay
   ) {}
 
   /**
    * Request a new grant from the authorization server.
-   * 
-   * Per RFC 9635 Section 2, the grant request includes:
+   *
+   * Per RFC 9635 §2, the grant request includes:
    * - access_token: requested access rights
-   * - client: client key information
+   * - client: client key information with JWK and proof method
    * - interact: interaction preferences (optional)
-   * 
+   *
    * @param accessRights - Resources and actions to request
    * @param interaction - Interaction configuration (optional)
    * @returns Grant response with tokens and/or continuation info
@@ -52,8 +66,10 @@ export class GnapGrantManager {
       client: {
         key: {
           proof: this.clientKey.proof,
-          jwk: await this.exportPublicJwk(),
+          jwk: this.getPublicJwk(),
         },
+        ...(this.walletAddress ? { wallet_address: this.walletAddress } : {}),
+        ...(this.clientDisplay ? { display: this.clientDisplay } : {}),
       },
     };
 
@@ -66,6 +82,7 @@ export class GnapGrantManager {
               method: interaction.finish.method,
               uri: interaction.finish.uri,
               nonce: interaction.finish.nonce || this.generateNonce(),
+              ...(interaction.finish.hash_method ? { hash_method: interaction.finish.hash_method } : {}),
             }
           : undefined,
       };
@@ -82,10 +99,10 @@ export class GnapGrantManager {
 
   /**
    * Continue a pending grant after resource owner interaction.
-   * 
-   * Per RFC 9635 Section 5.1, the continuation request uses the
+   *
+   * Per RFC 9635 §5.1, the continuation request uses the
    * continuation access token from the initial grant response.
-   * 
+   *
    * @param continueUri - Continuation URI from the grant response
    * @param continueToken - Continuation access token
    * @param interactRef - Interaction reference from the callback
@@ -108,8 +125,8 @@ export class GnapGrantManager {
 
   /**
    * Rotate an existing access token.
-   * 
-   * Per RFC 9635 Section 6.1, the client presents the current
+   *
+   * Per RFC 9635 §6.1, the client presents the current
    * access token to the token management URI to get a new one.
    */
   async rotateToken(
@@ -129,8 +146,8 @@ export class GnapGrantManager {
 
   /**
    * Revoke an access token.
-   * 
-   * Per RFC 9635 Section 6.2, sends DELETE to the management URI.
+   *
+   * Per RFC 9635 §6.2, sends DELETE to the management URI.
    */
   async revokeToken(
     managementUri: string,
@@ -146,6 +163,9 @@ export class GnapGrantManager {
 
   /**
    * Make an HTTP request signed with HTTP Message Signatures (RFC 9421).
+   *
+   * All GNAP requests use the httpsig proof method with tag="gnap"
+   * per RFC 9635 §7.3.3.
    */
   private async makeSignedRequest(
     url: string,
@@ -163,9 +183,7 @@ export class GnapGrantManager {
 
     const bodyStr = body ? JSON.stringify(body) : undefined;
 
-    // Sign the request using HTTP Message Signatures
-    const { signRequest, createSigner } = await import('@shujaapay/http-message-signatures');
-    
+    // Sign the request using HTTP Message Signatures with GNAP tag
     const signer = createSigner({
       keyId: this.clientKey.keyId,
       algorithm: this.clientKey.algorithm,
@@ -184,6 +202,7 @@ export class GnapGrantManager {
       signer,
       coveredComponents,
       includeContentDigest: !!bodyStr,
+      tag: 'gnap', // RFC 9635 §7.3.3 — GNAP httpsig proof method
     });
 
     const allHeaders = { ...headers, ...signedHeaders };
@@ -196,24 +215,42 @@ export class GnapGrantManager {
   }
 
   /**
-   * Export the client's public key as a JWK.
+   * Export the client's public key as a JWK for inclusion in grant requests.
+   *
+   * Derives the public key from the private key material, then uses
+   * exportPublicJwk from @shujaapay/http-message-signatures to produce
+   * a spec-compliant JWK with kty, crv, x, kid, and alg fields.
    */
-  private async exportPublicJwk(): Promise<Record<string, string>> {
-    // Placeholder: In production, derive from the private key
-    return {
-      kty: 'OKP',
-      crv: 'Ed25519',
+  private getPublicJwk(): Record<string, unknown> {
+    // Derive public key from private key
+    const publicKeyObj = createPublicKey(this.clientKey.privateKey);
+    const publicKeyPem = publicKeyObj.export({ type: 'spki', format: 'pem' }) as string;
+
+    const jwk = exportPublicJwk(publicKeyPem, {
       kid: this.clientKey.keyId,
-      // x: base64url-encoded public key
-    };
+      alg: algorithmToJwkAlg(this.clientKey.algorithm),
+    });
+
+    return jwk as Record<string, unknown>;
+  }
+
+  /**
+   * Generate a cryptographic nonce for interaction (RFC 9635 §2.5.2).
+   */
+  private generateNonce(): string {
+    return randomBytes(32).toString('base64url');
   }
 
   /**
    * Parse a grant response from the authorization server.
    */
   private async parseGrantResponse(response: Response): Promise<GrantResponse> {
+    if (!response.ok) {
+      throw new Error(`GNAP grant request failed: ${response.status} ${response.statusText}`);
+    }
+
     const data = await response.json() as Record<string, unknown>;
-    
+
     return {
       accessToken: data.access_token as GrantResponse['accessToken'],
       interact: data.interact as GrantResponse['interact'],
@@ -225,19 +262,15 @@ export class GnapGrantManager {
    * Parse a continuation response.
    */
   private async parseContinueResponse(response: Response): Promise<ContinueResponse> {
+    if (!response.ok) {
+      throw new Error(`GNAP continuation failed: ${response.status} ${response.statusText}`);
+    }
+
     const data = await response.json() as Record<string, unknown>;
-    
+
     return {
       accessToken: data.access_token as ContinueResponse['accessToken'],
       continue: data.continue as ContinueResponse['continue'],
     };
-  }
-
-  /**
-   * Generate a cryptographic nonce for interaction.
-   */
-  private generateNonce(): string {
-    const { randomBytes } = require('crypto');
-    return randomBytes(32).toString('base64url');
   }
 }

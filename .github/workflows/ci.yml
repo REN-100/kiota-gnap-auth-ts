@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Also checkout the signing library for the file: dependency
+      - uses: actions/checkout@v4
+        with:
+          repository: REN-100/http-message-signatures-ts
+          path: ../http-message-signatures-ts
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Build the signing library first
+      - name: Build http-message-signatures-ts
+        working-directory: ../http-message-signatures-ts
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist output
+        run: |
+          test -f dist/index.js
+          test -f dist/index.d.ts
+          test -f dist/gnap-auth-provider.js
+          test -f dist/gnap-grant-manager.js
+          test -f dist/gnap-access-token-provider.js
+          test -f dist/token-store.js
+          test -f dist/types.js
+          echo "All dist files present"
