@@ -73,8 +73,10 @@ export class GnapGrantManager {
         access: accessRights.map(right => ({
           type: right.type,
           actions: right.actions,
+          ...(right.identifier ? { identifier: right.identifier } : {}),
           ...(right.locations ? { locations: right.locations } : {}),
           ...(right.datatypes ? { datatypes: right.datatypes } : {}),
+          ...(right.limits ? { limits: right.limits } : {}),
         })),
         ...(flags && flags.length > 0 ? { flags } : {}),
       },

@@ -78,7 +78,7 @@ describe('GnapAccessTokenProvider', () => {
         value: 'stored_token',
         access: accessRights,
         expires_in: 3600,
-        manage: { uri: 'https://auth.example/manage/1' },
+        manage: 'https://auth.example/manage/1',
       },
     });
 
@@ -218,7 +218,7 @@ describe('GnapAccessTokenProvider', () => {
           value: 'event_token',
           access: accessRights,
           expires_in: 3600,
-          manage: { uri: 'https://auth.example/manage/1' },
+          manage: 'https://auth.example/manage/1',
         },
       });
 

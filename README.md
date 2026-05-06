@@ -26,11 +26,11 @@ This package implements a [Kiota](https://learn.microsoft.com/en-us/openapi/kiot
 - **Continuation polling** — `pollContinuation()` with `wait` interval support and `too_fast` backoff
 - **Retry with backoff** — Configurable exponential retry for transient failures (429, 5xx)
 - **Lifecycle events** — Typed event emitter for `token:acquired`, `token:rotated`, `grant:error`, etc.
-- **Key proof support** — Ed25519 key proofs with real JWK export for GNAP grant requests
+- **Multi-algorithm keys** — Ed25519 (recommended) and ECDSA-P256 key proofs
 - **Token flags** — Support for `bearer` and `durable` flags (RFC 9635 §2.1.1)
 - **Content-Digest** — Automatic SHA-256 body digest header for request integrity (RFC 9530)
 - **Interaction hash** — RFC 9635 §4.2.3 verification with timing-safe comparison
-- **Open Payments optimized** — Wallet address identification, client display, datatypes in access rights
+- **Open Payments optimized** — Wallet address identification, `identifier`, `limits` (debitAmount/receiveAmount/interval), client display
 
 ## Installation
 
@@ -53,10 +53,26 @@ const authProvider = new GnapAuthenticationProvider({
     proof: 'httpsig',
   },
   accessRights: [
-    { type: 'incoming-payment', actions: ['create', 'read', 'list'] },
-    { type: 'outgoing-payment', actions: ['create', 'read', 'list'] },
+    {
+      type: 'incoming-payment',
+      actions: ['create', 'read', 'list', 'complete'],
+      identifier: 'https://wallet.example/alice',
+    },
+    {
+      type: 'outgoing-payment',
+      actions: ['create', 'read', 'list'],
+      identifier: 'https://wallet.example/alice',
+      limits: {
+        receiver: 'https://wallet.example/bob/incoming-payments/abc',
+        debitAmount: { value: '50000', assetCode: 'KES', assetScale: 2 },
+        interval: 'R12/2024-01-01T00:00:00Z/P1M',
+      },
+    },
     { type: 'quote', actions: ['create', 'read'] },
   ],
+  // Optional: wallet address for AS key resolution
+  walletAddress: 'https://wallet.example/alice',
+  clientDisplay: { name: 'ShujaaPay', uri: 'https://www.shujaapay.me' },
 });
 
 // 2. Use with Kiota-generated client
@@ -68,6 +84,24 @@ const client = new OpenPaymentsClient(adapter);
 
 // 3. Make authenticated API calls — GNAP auth is automatic
 const payments = await client.incomingPayments.get();
+```
+
+### Using ECDSA-P256 Keys
+
+```typescript
+// ECDSA-P256 is fully supported alongside Ed25519
+const authProvider = new GnapAuthenticationProvider({
+  grantEndpoint: 'https://auth.wallet.example/',
+  clientKey: {
+    keyId: 'my-ec-key',
+    privateKey: myEcdsaP256PrivateKey, // PEM-encoded P-256 private key
+    algorithm: 'ecdsa-p256-sha256',    // ES256 in JWK terms
+    proof: 'httpsig',
+  },
+  accessRights: [
+    { type: 'incoming-payment', actions: ['create', 'read'] },
+  ],
+});
 ```
 
 ## Architecture
@@ -286,7 +320,7 @@ src/
   types.ts                        # TypeScript interfaces
 tests/
   token-store.test.ts             # 10 tests: CRUD, TTL, auto-prune
-  gnap-grant-manager.test.ts      # 14 tests: grant/continue/rotate/revoke/delete/errors
+  gnap-grant-manager.test.ts      # 17 tests: grant/continue/rotate/revoke/delete/errors/ECDSA/OP
   gnap-access-token-provider.test.ts  # 14 tests: cache, rotation, concurrency, events
   interaction-hash.test.ts        # 8 tests: SHA-256/512, tamper, injection
   errors.test.ts                  # 13 tests: error types, parsing, recovery

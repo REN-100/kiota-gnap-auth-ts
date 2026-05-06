@@ -49,16 +49,85 @@ export interface ClientKeyConfig {
   proof: 'httpsig' | 'mtls' | 'jwsd' | 'dpop';
 }
 
-/** GNAP access right request (RFC 9635 Section 8) */
+/** GNAP access right request (RFC 9635 Section 8 + Open Payments extensions) */
 export interface AccessRight {
-  /** Resource type (e.g., 'incoming-payment', 'outgoing-payment') */
+  /** Resource type (e.g., 'incoming-payment', 'outgoing-payment', 'quote') */
   type: string;
-  /** Permitted actions on this resource type */
+  /**
+   * Permitted actions on this resource type.
+   *
+   * Open Payments standard actions:
+   * - incoming-payment: create, complete, read, read-all, list, list-all
+   * - outgoing-payment: create, read, read-all, list, list-all
+   * - quote: create, read, read-all
+   */
   actions: string[];
-  /** Specific resource locations (optional) */
+  /**
+   * Specific resource identifier at the RS (Open Payments).
+   * Typically a wallet address URL: 'https://wallet.example/alice'
+   */
+  identifier?: string;
+  /** Specific resource locations (RFC 9635 generic) */
   locations?: string[];
   /** Data types (optional) */
   datatypes?: string[];
+  /**
+   * Payment limits for outgoing-payment grants (Open Payments).
+   * Constrains the total amount that can be sent under this grant.
+   */
+  limits?: PaymentLimits;
+}
+
+/**
+ * Payment limits for outgoing-payment grants (Open Payments).
+ *
+ * Used to constrain the total debit/receive amounts and payment
+ * intervals for grants that authorize outgoing payments.
+ *
+ * @example
+ * ```ts
+ * limits: {
+ *   receiver: 'https://wallet.example/bob/incoming-payments/abc',
+ *   debitAmount: { value: '1000', assetCode: 'USD', assetScale: 2 },
+ *   interval: 'R12/2024-01-01T00:00:00Z/P1M'
+ * }
+ * ```
+ */
+export interface PaymentLimits {
+  /** URL of the incoming payment being paid */
+  receiver?: string;
+  /** Maximum debit amount per interval */
+  debitAmount?: Amount;
+  /** Maximum receive amount per interval */
+  receiveAmount?: Amount;
+  /**
+   * ISO 8601 repeating interval for recurring payments.
+   * @example 'R12/2024-01-01T00:00:00Z/P1M' (12 monthly payments)
+   */
+  interval?: string;
+}
+
+/**
+ * Monetary amount representation (Open Payments).
+ *
+ * Uses integer-based representation with asset scale to avoid
+ * floating-point precision issues in financial calculations.
+ *
+ * @example
+ * ```ts
+ * // $10.00 USD
+ * { value: '1000', assetCode: 'USD', assetScale: 2 }
+ * // KES 500.00
+ * { value: '50000', assetCode: 'KES', assetScale: 2 }
+ * ```
+ */
+export interface Amount {
+  /** Unsigned 64-bit integer amount as a string */
+  value: string;
+  /** ISO 4217 currency code (e.g., 'USD', 'KES', 'EUR') */
+  assetCode: string;
+  /** Decimal places defining the smallest divisible unit */
+  assetScale: number;
 }
 
 /** Interaction configuration for resource owner authorization */
@@ -93,9 +162,8 @@ export interface GrantResponse {
   /** Access token (present if grant is immediately approved) */
   accessToken?: {
     value: string;
-    manage?: {
-      uri: string;
-    };
+    /** Token management URI (for rotation/revocation) */
+    manage?: string;
     access: AccessRight[];
     expires_in?: number;
     /** Token flags (RFC 9635 §2.1.1) */

@@ -42,4 +42,6 @@ export type {
   ContinueResponse,
   TokenInfo,
   TokenStore,
+  PaymentLimits,
+  Amount,
 } from './types';

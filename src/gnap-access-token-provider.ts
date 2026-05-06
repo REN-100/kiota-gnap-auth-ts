@@ -162,7 +162,7 @@ export class GnapAccessTokenProvider {
       this.events.emit('token:acquired', {
         scopeKey,
         expiresIn: grantResponse.accessToken.expires_in,
-        hasManagementUri: !!grantResponse.accessToken.manage?.uri,
+        hasManagementUri: !!grantResponse.accessToken.manage,
       });
       return tokenInfo.value;
     }
@@ -223,7 +223,7 @@ export class GnapAccessTokenProvider {
     this.events.emit('token:acquired', {
       scopeKey,
       expiresIn: response.accessToken.expires_in,
-      hasManagementUri: !!response.accessToken.manage?.uri,
+      hasManagementUri: !!response.accessToken.manage,
     });
     return tokenInfo.value;
   }
@@ -270,7 +270,7 @@ export class GnapAccessTokenProvider {
           this.events.emit('token:acquired', {
             scopeKey,
             expiresIn: response.accessToken.expires_in,
-            hasManagementUri: !!response.accessToken.manage?.uri,
+            hasManagementUri: !!response.accessToken.manage,
           });
           return tokenInfo.value;
         }
@@ -337,7 +337,7 @@ export class GnapAccessTokenProvider {
   private buildTokenInfo(grantResponse: { accessToken?: any; continue?: any }): TokenInfo {
     return {
       value: grantResponse.accessToken.value,
-      managementUri: grantResponse.accessToken.manage?.uri,
+      managementUri: grantResponse.accessToken.manage,
       access: grantResponse.accessToken.access,
       flags: grantResponse.accessToken.flags,
       expiresAt: grantResponse.accessToken.expires_in

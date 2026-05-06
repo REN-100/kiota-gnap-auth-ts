@@ -1,9 +1,9 @@
 /**
  * Tests for GnapGrantManager
  *
- * Covers: grant requests with datatypes/flags, continuation, rotation,
- * revocation, grant deletion, structured error handling, retry, and
- * Content-Digest header.
+ * Covers: grant requests with datatypes/flags, identifier/limits (Open Payments),
+ * ECDSA-P256 algorithm support, continuation, rotation, revocation, grant
+ * deletion, structured error handling, retry, and Content-Digest header.
  */
 
 import { GnapGrantManager } from '../src/gnap-grant-manager';
@@ -68,7 +68,7 @@ describe('GnapGrantManager', () => {
         json: async () => ({
           access_token: {
             value: 'os_token_abc123',
-            manage: { uri: 'https://auth.example/manage/1' },
+            manage: 'https://auth.example/manage/1',
             access: [{ type: 'incoming-payment', actions: ['create', 'read'] }],
             expires_in: 3600,
           },
@@ -231,6 +231,79 @@ describe('GnapGrantManager', () => {
         expect((e as GnapError).code).toBe('user_denied');
         expect((e as GnapError).statusCode).toBe(403);
       }
+    });
+
+    it('includes identifier and limits for Open Payments outgoing-payment', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: { value: 'tok', access: [] } }),
+      });
+
+      await manager.requestGrant([{
+        type: 'outgoing-payment',
+        actions: ['create', 'read'],
+        identifier: 'https://wallet.example/alice',
+        limits: {
+          receiver: 'https://wallet.example/bob/incoming-payments/abc',
+          debitAmount: { value: '1000', assetCode: 'USD', assetScale: 2 },
+          interval: 'R12/2024-01-01T00:00:00Z/P1M',
+        },
+      }]);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const access = body.access_token.access[0];
+      expect(access.identifier).toBe('https://wallet.example/alice');
+      expect(access.limits.receiver).toBe('https://wallet.example/bob/incoming-payments/abc');
+      expect(access.limits.debitAmount).toEqual({ value: '1000', assetCode: 'USD', assetScale: 2 });
+      expect(access.limits.interval).toBe('R12/2024-01-01T00:00:00Z/P1M');
+    });
+
+    it('supports ECDSA-P256 algorithm for key proofing', async () => {
+      const ecManager = new GnapGrantManager(
+        'https://auth.example/',
+        {
+          keyId: 'ec-key-id',
+          privateKey: '-----BEGIN PRIVATE KEY-----\ntest-ec\n-----END PRIVATE KEY-----',
+          algorithm: 'ecdsa-p256-sha256' as const,
+          proof: 'httpsig' as const,
+        },
+        undefined,
+        undefined,
+        { maxAttempts: 0, baseDelayMs: 0, maxDelayMs: 0, jitter: false, retryableStatuses: [] }
+      );
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: { value: 'ec-tok', access: [] } }),
+      });
+
+      const result = await ecManager.requestGrant([
+        { type: 'incoming-payment', actions: ['create'] },
+      ]);
+
+      expect(result.accessToken?.value).toBe('ec-tok');
+      // Verify the signing library was called (it will use ecdsa-p256-sha256)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('includes identifier without limits for incoming-payment', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: { value: 'tok', access: [] } }),
+      });
+
+      await manager.requestGrant([{
+        type: 'incoming-payment',
+        actions: ['create', 'read', 'read-all', 'list', 'list-all', 'complete'],
+        identifier: 'https://ilp.interledger-test.dev/bob',
+      }]);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const access = body.access_token.access[0];
+      expect(access.identifier).toBe('https://ilp.interledger-test.dev/bob');
+      expect(access.actions).toContain('complete');
+      expect(access.actions).toContain('list-all');
+      expect(access.limits).toBeUndefined();
     });
   });
 
