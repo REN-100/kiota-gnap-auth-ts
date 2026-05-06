@@ -16,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Also checkout the signing library for the file: dependency
-      - uses: actions/checkout@v4
-        with:
-          repository: REN-100/http-message-signatures-ts
-          path: ../http-message-signatures-ts
+      # Checkout the signing library as a sibling directory
+      # GitHub Actions workspace is $GITHUB_WORKSPACE, so we clone to a sibling
+      - name: Clone http-message-signatures-ts
+        run: |
+          git clone https://github.com/REN-100/http-message-signatures-ts.git "$GITHUB_WORKSPACE/../http-message-signatures-ts"
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -54,5 +54,9 @@ jobs:
           test -f dist/gnap-grant-manager.js
           test -f dist/gnap-access-token-provider.js
           test -f dist/token-store.js
+          test -f dist/errors.js
+          test -f dist/retry.js
+          test -f dist/events.js
+          test -f dist/interaction-hash.js
           test -f dist/types.js
-          echo "All dist files present"
+          echo "All dist files present (11 modules)"
